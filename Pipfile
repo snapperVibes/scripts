@@ -6,6 +6,7 @@ verify_ssl = true
 [dev-packages]
 # black can cause issues because it is a pre-release. If it doesn't work properly, try pipenv install black --pre --dev
 black = "*"
+pre-commit = "*"
 
 [packages]
 requests = "*"

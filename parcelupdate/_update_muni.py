@@ -9,13 +9,9 @@ Actions resulting from trigger functions are commented in the following syntax:
 import json
 
 import fetch
-import _scrape_and_parse
+from _scrape_and_parse import OwnerName
 from _constants import DASHES, MEDIUM_DASHES, SHORT_DASHES, SPACE
 from _constants import DEFAULT_PROP_UNIT, BOT_ID
-
-
-
-
 
 
 def parcel_not_in_db(parid, db_cursor):
@@ -32,6 +28,7 @@ def parcel_not_in_db(parid, db_cursor):
 
 
 def write_property_to_db(imap, db_cursor):
+    # Todo: Write function in a way so that we can reuse the insert sql for the alter sql
     insert_sql = """
         INSERT INTO property(
             propertyid, municipality_municode, parid, lotandblock,
@@ -50,7 +47,35 @@ def write_property_to_db(imap, db_cursor):
         RETURNING propertyid;
     """
     db_cursor.execute(insert_sql, imap)
-    # print("Inserted propertyid {}".format(imap["propertyid"]))
+    return db_cursor.fetchone()[0]  # Returns the property_id
+
+
+def update_property_in_db(propid, imap, db_cursor):
+    # Todo: Write function in a way so that we can reuse the insert sql for the alter sql
+    imap["propertyid"] = propid
+    insert_sql = """
+        UPDATE property SET(
+            municipality_municode = %(municipality_municode)s,
+            parid = %(parid)s,
+            lotandblock = %(lotandblock)s,
+            address = %(address)s,
+            usegroup = %(usegroup)s,
+            constructiontype = %(constructiontype)s,
+            countycode = %(countycode)s,
+            notes = %(notes)s,
+            addr_city = %(addr_city)s,
+            addr_state = %(addr_state)s,
+            addr_zip = %(addr_zip)s,
+            ownercode = %(ownercode)s,
+            propclass = %(propclass)s,
+            lastupdated = now(),
+            lastupdatedby = %(lastupdatedby)s,
+            locationdescription) = %(locationdescription)s,
+            bobsource = %(bobsource)s
+        )
+        WHERE propertyid = %(propertyid)
+    """
+    db_cursor.execute(insert_sql, imap)
     return db_cursor.fetchone()[0]  # Returns the property_id
 
 
@@ -91,20 +116,6 @@ def create_insertmap_from_record(r):
     imap["lastupdatedby"] = BOT_ID
     imap["locationdescription"] = None
     imap["bobsource"] = None
-    return imap
-
-
-def create_default_unit_insertmap(prop_id, db_cursor, default_unit=-1):
-    imap = {}
-    imap["unitnumber"] = default_unit
-    imap["property_propertyid"] = prop_id
-    imap["otherknownaddress"] = None
-    imap[
-        "notes"
-    ] = "Robot-generated unit representing the primary habitable dwelling on a property"
-    imap[
-        "rental"
-    ] = None  # TODO: MAKE SURE THIS DOESN'T CRASH THE SYSTEM. GET RENTAL DATA
     return imap
 
 
@@ -179,6 +190,7 @@ def create_owner_insertmap(name, r):
     imap["cleanname"] = name.clean
     imap["fname"] = name.first
     imap["lname"] = name.last
+    imap["multientity"] = name.multientity
     return imap
 
 
@@ -219,12 +231,8 @@ def connect_property_to_person(prop_id, person_id, db_cursor):
 
 
 def create_propertyexternaldata_map(prop_id, name, r):
-    """
-
-
-    Yes, this is basically duplicate code.
-    However, explicitly restating what record data maps to insert data makes the code easier to both read and write.
-    """
+    # Yes, this is basically duplicate code.
+    # However, explicitly restating what record data maps to insert data makes the code easier to both read and write.
     imap = {}
     imap["property_propertyid"] = prop_id
     imap["ownername"] = name
@@ -282,16 +290,6 @@ def write_propertyexternaldata(propextern_map, db_cursor):
 
 def parcel_changed(prop_id, db_cursor):
     """ Checks if parcel info is different from last time"""
-    # select_sql = """
-    #     SELECT(
-    #         property_propertyid, ownername, address_street, address_citystatezip,
-    #         livingarea, condition, taxstatus
-    #     )
-    #         FROM public.propertyexternaldata
-    #         WHERE property_propertyid = %(prop_id)s
-    #         ORDER BY lastupdated DESC
-    #         LIMIT 2;
-    # """
     select_sql = """
         SELECT(
             property_propertyid, ownername, address_street, address_citystatezip,
@@ -314,7 +312,7 @@ def parcel_changed(prop_id, db_cursor):
             "'s propertyexternaldata is different from last time.",
             sep="",
         )
-        return False
+        return True
     except IndexError:  # If this is the first time the property_propertyid occurs in propertyexternaldata
         print("First time parcel has appeared in propertyexternaldata")
         return True
@@ -367,8 +365,7 @@ def create_CodeViolationUpdate_imap(cecase_id):
     return imap
 
 
-def writeCodeViolationEvent(cvu_map, db_cursor):
-    # TODO: Better function naming.
+def writePropertyInfoChangeEvent(cvu_map, db_cursor):
     # TODO: Create different category id's depending on what is different (name vs tax, etc)
     insert_sql = """
         INSERT INTO public.event(
@@ -407,9 +404,6 @@ def get_unitid_from_db(prop_id, db_cursor):
 def update_muni(muni, db_cursor, commit=True):
     """
     The core functionality of the script.
-
-    Arguments:
-        muni: namedtuple
     """
 
     print("Updating {} ({})".format(muni.name, muni.municode))
@@ -448,8 +442,8 @@ def update_muni(muni, db_cursor, commit=True):
             write_cecase_to_db(cecase_map, db_cursor)
 
             # Unfortunately, we have to scrape this oursevles to check for changes
-            name_parts = _scrape_and_parse.get_owner_given_parid(parid)
-            owner_map = create_owner_insertmap(name_parts, record)
+            owner_name = OwnerName.get_Owner_given_parid(parid)
+            owner_map = create_owner_insertmap(owner_name, record)
             person_id = write_person_to_db(owner_map, db_cursor)
             # ~~ Update Spelling (Not implemented)
 
@@ -457,12 +451,13 @@ def update_muni(muni, db_cursor, commit=True):
             inserted_count += 1
             inserted_flag = True
         else:
-            # Todo: This is ugly, un-Pythonic code. Fix it.
             prop_id = get_propid(parid, db_cursor)
             # We have to scrape this again to see if it changed
-            name_parts = _scrape_and_parse.get_owner_given_parid(parid)
+            owner_name = OwnerName.get_Owner_given_parid(parid)
 
-        propextern_map = create_propertyexternaldata_map(prop_id, name_parts.raw, record)
+        propextern_map = create_propertyexternaldata_map(
+            prop_id, owner_name.raw, record
+        )
         # Property external data is a misnomer. It's just a log of the data from every time stuff
         prop_id = write_propertyexternaldata(propextern_map, db_cursor)
 
@@ -470,18 +465,16 @@ def update_muni(muni, db_cursor, commit=True):
             #   This whole block of code does one important task:
             #       writeCodeViolationEvent(cvu_map, db_cursor)
             #   The prefacing code is just error handling to make sure there is enough info to write about it
-            # TODO: The initial idea was to have property not be updated. This was an odd approach to say the least.
-            # TODO: Implement update_property
-            # update_property(prop_id, record, db_cursor)
+
+            # # Code enforcement officers ought to verify data before it is updated in the database.
+            # imap = create_insertmap_from_record(record)
+            # update_property_in_db(prop_id, imap, db_cursor)
             # TODO: Add newPropertyEvent
 
             cecase_id = get_cecase_from_db(prop_id, db_cursor)
-            # Todo: I first had this in try/except blocks here, but I moved them inside the functions themselves
-            # What's the proper way to handle the exceptions?
             if cecase_id is None:
                 unit_id = get_unitid_from_db(prop_id, db_cursor)
                 if unit_id is None:
-
                     # TODO: Repeated code. Put in function
                     if record["PROPERTYUNIT"] != "":
                         unit_map = create_unit_map(
@@ -495,7 +488,7 @@ def update_muni(muni, db_cursor, commit=True):
                 cecase_id = write_cecase_to_db(cecase_map, db_cursor)
 
             cvu_map = create_CodeViolationUpdate_imap(cecase_id)
-            writeCodeViolationEvent(cvu_map, db_cursor)
+            writePropertyInfoChangeEvent(cvu_map, db_cursor)
             if not inserted_flag:
                 updated_count += 1
 

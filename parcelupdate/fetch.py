@@ -38,18 +38,19 @@ def get_muniname_from_municode(municode, db_cursor):
         return Municipality(*row)
     except TypeError as e:
         if row is None:
-            raise TypeError("The municode given as an argument likely does not exist in the database")
-        else: raise e
+            raise TypeError(
+                "The municode given as an argument likely does not exist in the database"
+            )
+        else:
+            raise e
 
 
 # Todo: Is writing .json files the best way to do this? Does it scale?
 def fetch_muni_data_and_write_to_file(Municipality):
-    # To ensure atomic writes, we write to a temp file and then change the filename
     # Note: The WPRDC limits 50,000 parcels
     script_dir = os.path.dirname(__file__)
     rel_path = os.path.join(PARCEL_ID_LISTS, Municipality.name + "_parcelids.json")
     abs_path = os.path.join(script_dir, rel_path)
-
 
     with open(abs_path, "w") as f:
         wprdc_url = """https://data.wprdc.org/api/3/action/datastore_search_sql?sql=
