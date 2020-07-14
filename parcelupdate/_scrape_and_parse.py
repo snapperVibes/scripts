@@ -134,7 +134,9 @@ class OwnerName:
         o.clean = (
             o._clean_raw_name()
         )  # Method side effect: May change flag o.multientity
-        o.first, o.last = o.split_name()
+        # Work around: The Java side hasn't updated their code to match the cleanname, and instead concatenates fname and lname.
+        o.first = o.clean
+        o.last = ""
         return o
 
     def _parse_owners_from_soup(self, parid, soup):
