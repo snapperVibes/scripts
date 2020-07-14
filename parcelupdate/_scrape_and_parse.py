@@ -119,7 +119,7 @@ def _strip_whitespace(text):
 
 
 class OwnerName:
-    __slots__ = ["raw", "clean", "first", "last", "multientity"]
+    __slots__ = ["raw", "clean", "first", "last", "multientity", "compositelname"]
 
     def __init__(self, parid=None):
         self.multientity = None
@@ -135,8 +135,10 @@ class OwnerName:
             o._clean_raw_name()
         )  # Method side effect: May change flag o.multientity
         # Work around: The Java side hasn't updated their code to match the cleanname, and instead concatenates fname and lname.
-        o.first = o.clean
-        o.last = ""
+        # We will also have to deprecate the composite last name flag
+        o.first = ""
+        o.last = o.clean
+        o.compositelname = True
         return o
 
     def _parse_owners_from_soup(self, parid, soup):

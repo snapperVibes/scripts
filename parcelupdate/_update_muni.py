@@ -191,6 +191,7 @@ def create_owner_insertmap(name, r):
     imap["fname"] = name.first
     imap["lname"] = name.last
     imap["multientity"] = name.multientity
+    imap["compositelname"] = name.compositelname
     return imap
 
 
@@ -202,14 +203,14 @@ def write_person_to_db(record, db_cursor):
             email, address_street, address_city, address_state, 
             address_zip, notes, lastupdated, expirydate, 
             isactive, isunder18, humanverifiedby, rawname,
-            cleanname)
+            cleanname, compositelname, multientity)
         VALUES(
             cast ( 'ownercntylookup' as persontype), %(muni_municode)s, %(fname)s, %(lname)s,
             %(jobtitle)s, %(phonecell)s, %(phonehome)s, %(phonework)s,
             %(email)s, %(address_street)s, %(address_city)s, %(address_state)s,
             %(address_zip)s, %(notes)s, now(), %(expirydate)s,
             %(isactive)s, %(isunder18)s, %(humanverifiedby)s, %(rawname)s,
-            %(cleanname)s
+            %(cleanname)s, %(compositelname)s, %(multientity)s
         )
         RETURNING personid;
     """
@@ -355,10 +356,10 @@ def get_cecase_from_db(prop_id, db_cursor):
         return None
 
 
-def create_CodeViolationUpdate_imap(cecase_id):
+def create_PropertyInfoChange_imap(cecase_id):
     imap = {}
     imap["cecase_caseid"] = cecase_id
-    imap["category_catid"] = 220  # Code Violation Update
+    imap["category_catid"] = 300  # Property Info Update
     imap["eventdescription"] = "Change in column"  # Todo: Write better description
     imap["creator_userid"] = BOT_ID
     imap["lastupdatedby_userid"] = BOT_ID
@@ -487,7 +488,7 @@ def update_muni(muni, db_cursor, commit=True):
                 cecase_map = create_cecase_insertmap(prop_id, unit_id)
                 cecase_id = write_cecase_to_db(cecase_map, db_cursor)
 
-            cvu_map = create_CodeViolationUpdate_imap(cecase_id)
+            cvu_map = create_PropertyInfoChange_imap(cecase_id)
             writePropertyInfoChangeEvent(cvu_map, db_cursor)
             if not inserted_flag:
                 updated_count += 1
