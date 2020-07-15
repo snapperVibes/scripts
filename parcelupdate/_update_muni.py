@@ -233,12 +233,12 @@ def create_propertyexternaldata_map(prop_id, name, r):
 def write_propertyexternaldata(propextern_map, db_cursor):
     insert_sql = """
         INSERT INTO public.propertyexternaldata(
-        extdataid,
-        property_propertyid, ownername, address_street, address_citystatezip,
-        address_city, address_state, address_zip, saleprice,
-        saleyear, assessedlandvalue, assessedbuildingvalue, assessmentyear,
-        usecode, livingarea, condition, taxstatus,
-        taxstatusyear, notes, lastupdated
+            extdataid,
+            property_propertyid, ownername, address_street, address_citystatezip,
+            address_city, address_state, address_zip, saleprice,
+            saleyear, assessedlandvalue, assessedbuildingvalue, assessmentyear,
+            usecode, livingarea, condition, taxstatus,
+            taxstatusyear, notes, lastupdated
         )
         VALUES(
             DEFAULT,
@@ -274,7 +274,7 @@ def parcel_changed(prop_id, flags, db_cursor):
     except IndexError:  # If this is the first time the property_propertyid occurs in propertyexternaldata
         print("First time parcel has appeared in propertyexternaldata")
         if flags.new_parcel == False:
-            # TODO: THROW ERROR: This should have appeared in propertyexternaldata before. Otherwise, it's not a new flag.
+            # TODO: THROW ERROR: Doesn't properly check for flags
             print(
                 "Error: Parcel appeared in public.propertyexternaldata for the first time even though the parcel ID is flagged as appearing in public.property before."
             )

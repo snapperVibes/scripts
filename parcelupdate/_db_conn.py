@@ -5,7 +5,12 @@ from _constants import BOT_NAME
 
 @contextmanager
 def get_db_and_cursor(
-    database="cogdb", user=BOT_NAME, password="c0d3", host="localhost", v=False
+    database="cogdb",
+    user=BOT_NAME,
+    password="c0d3",
+    host="localhost",
+    port=5432,
+    v=False,
 ):  # Todo: Add more verbosity
     """
     Context manager that connects to the database, yields a cursor, and automatically closes connections.
@@ -31,7 +36,7 @@ def get_db_and_cursor(
     # Todo: Option to read in username/password from secrets.json
     try:
         db_conn = psycopg2.connect(
-            database=database, user=user, password=password, host=host
+            database=database, user=user, password=password, host=host, port=port
         )
         cursor = db_conn.cursor()
 

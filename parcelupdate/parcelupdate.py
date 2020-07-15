@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# TODO: Make relative paths works
 
 import math
 import time
@@ -17,13 +16,14 @@ from _constants import DASHES
     "municodes", nargs=-1, default=None,
 )
 @click.option("-u", nargs=1, default="sylvia")
-@click.option("-p", nargs=1, default="c0d3")
+@click.option("-password", nargs=1, default="c0d3")
 @click.option(
     "--commit/--test",
     default=True,
     help="Choose whether to commit to the database or to just run as a test",
 )
-def main(municodes, commit, u, p):
+@click.option("-port", nargs=1, default=5432)
+def main(municodes, commit, u, password, port):
     """Updates the CodeNForce database with the most recent data provided by the WPRDC."""
 
     start = time.time()
@@ -34,7 +34,7 @@ def main(municodes, commit, u, p):
     click.echo(DASHES)
 
     # Calls the core functionality for each municipality in the argument
-    with get_db_and_cursor(user=u, password=p) as db_cursor:
+    with get_db_and_cursor(user=u, password=password, port=port) as db_cursor:
         muni_count = 0
         if municodes == ():
             # Update ALL municipalities
