@@ -27,11 +27,6 @@ def main(municodes, commit, u, p):
     """Updates the CodeNForce database with the most recent data provided by the WPRDC."""
 
     start = time.time()
-
-    # # Debugging code
-    # municodes = (111,)
-    # commit=True
-
     if commit:
         click.echo("Data will be committed to the database")
     else:

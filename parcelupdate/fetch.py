@@ -81,5 +81,13 @@ def validate_muni_json(file_name):
     print(file_name, "could not be validated. Skipping.")
 
 
+def get_propid(parid, db_cursor):
+    select_sql = """
+        SELECT propertyid FROM public.property
+        WHERE parid = %s;"""
+    db_cursor.execute(select_sql, [parid])
+    return db_cursor.fetchone()[0]  # property id
+
+
 if __name__ == "__main__":
     main()

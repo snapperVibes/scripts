@@ -7,8 +7,12 @@ Actions resulting from trigger functions are commented in the following syntax:
 """
 
 import json
+from collections import namedtuple
 
-import fetch
+import create as create
+import events
+import fetch as fetch
+import insert
 from _scrape_and_parse import OwnerName
 from _constants import DASHES, MEDIUM_DASHES, SHORT_DASHES, SPACE
 from _constants import DEFAULT_PROP_UNIT, BOT_ID
@@ -22,7 +26,7 @@ def parcel_not_in_db(parid, db_cursor):
     db_cursor.execute(select_sql, [parid])
     row = db_cursor.fetchone()
     if row is None:
-        print("Parcel {} not in database.".format(parid))
+        print("Parcel {} not in properties.".format(parid))
         return True
     return False
 
@@ -117,45 +121,6 @@ def create_insertmap_from_record(r):
     imap["locationdescription"] = None
     imap["bobsource"] = None
     return imap
-
-
-def create_cecase_insertmap(prop_id, unit_id):
-    imap = {}
-    imap["cecasepubliccc"] = 111111
-    imap["property_propertyid"] = prop_id
-    imap["propertyunit_unitid"] = unit_id
-    imap["login_userid"] = BOT_ID
-    imap["casename"] = "Import from county site"
-    imap["casephase"] = None
-    imap["notes"] = "Initial case for each property"
-    imap["paccenabled"] = False
-    imap["allowuplinkaccess"] = None
-    imap["propertyinfocase"] = True
-    imap["personinfocase_personid"] = None
-    imap["bobsource_sourceid"] = None
-    imap["active"] = True
-    return imap
-
-
-def write_cecase_to_db(cecase_map, db_cursor):
-    insert_sql = """INSERT INTO public.cecase(
-        caseid, cecasepubliccc, property_propertyid, propertyunit_unitid,
-        login_userid, casename, casephase, originationdate,
-        closingdate, creationtimestamp, notes, paccenabled,
-        allowuplinkaccess, propertyinfocase, personinfocase_personid, bobsource_sourceid,
-        active
-    )
-    VALUES(
-        DEFAULT, %(cecasepubliccc)s, %(property_propertyid)s, %(propertyunit_unitid)s,
-        %(login_userid)s, %(casename)s, cast ('Closed' as casephase), now(),
-        now(), now(), %(notes)s, %(paccenabled)s,
-        %(allowuplinkaccess)s, %(propertyinfocase)s, %(personinfocase_personid)s, %(bobsource_sourceid)s,
-        %(active)s
-    )
-    RETURNING caseid"""
-    db_cursor.execute(insert_sql, cecase_map)
-    return db_cursor.fetchone()[0]  # caseid
-    # print("Writen CE Case")
 
 
 def create_owner_insertmap(name, r):
@@ -289,71 +254,54 @@ def write_propertyexternaldata(propextern_map, db_cursor):
     return db_cursor.fetchone()[0]  # property_id
 
 
-def parcel_changed(prop_id, db_cursor):
+def parcel_changed(prop_id, flags, db_cursor):
     """ Checks if parcel info is different from last time"""
     select_sql = """
-        SELECT(
+        SELECT
             property_propertyid, ownername, address_street, address_citystatezip,
             livingarea, condition, taxstatus
-        )
-            FROM public.propertyexternaldata
-            WHERE property_propertyid = %(prop_id)s
-            ORDER BY lastupdated DESC
-            LIMIT 2;
+        FROM public.propertyexternaldata
+        WHERE property_propertyid = %(prop_id)s
+        ORDER BY lastupdated DESC
+        LIMIT 2;
     """
 
     db_cursor.execute(select_sql, {"prop_id": prop_id})
     selection = db_cursor.fetchall()
+    old = selection[0]
     try:
-        if selection[0] == selection[1]:
-            return False
-        print(
-            "Property ",
-            prop_id,
-            "'s propertyexternaldata is different from last time.",
-            sep="",
-        )
-        return True
+        new = selection[1]
     except IndexError:  # If this is the first time the property_propertyid occurs in propertyexternaldata
         print("First time parcel has appeared in propertyexternaldata")
-        return True
+        if flags.new_parcel == False:
+            # TODO: THROW ERROR: This should have appeared in propertyexternaldata before. Otherwise, it's not a new flag.
+            print(
+                "Error: Parcel appeared in public.propertyexternaldata for the first time even though the parcel ID is flagged as appearing in public.property before."
+            )
+        return flags
+
+    if old[0] != new[0]:
+        flags.ownername = Flag("owner name", old[0], new[0])
+    if old[1] != new[1]:
+        flags.street = Flag("street", old[0], new[0])
+    if old[2] != new[2]:
+        flags.citystatezip = Flag("city, state, or zipcode", old[0], new[0])
+    if old[3] != new[3]:
+        flags.livingarea = Flag("living area size", old[0], new[0])
+    if old[4] != new[4]:
+        flags.condition = Flag("condition", old[0], new[0])
+    if old[5] != new[5]:
+        flags.taxstatus = Flag(
+            "tax status", old[0], new[0]
+        )  # Perhaps have a look up here
+    # Todo: Property taxes
 
 
 def create_unit_map(prop_id, unit_id):
     imap = {}
     imap["property_propertyid"] = prop_id
-    imap["default_unit"] = unit_id
+    imap["unitnumber"] = unit_id
     return imap
-
-
-def insert_unit(imap, db_cursor):
-    insert_sql = """
-        INSERT INTO public.propertyunit(
-            unitid, unitnumber, property_propertyid, otherknownaddress, notes, 
-            rental)
-        VALUES(
-            DEFAULT, %(default_unit)s, %(property_propertyid)s, NULL, 
-            'robot-generated unit representing the primary habitable dwelling on a property', 
-            FALSE)
-        RETURNING unitid;
-    """
-    db_cursor.execute(insert_sql, imap)
-    return db_cursor.fetchone()[0]  # unit_id
-
-
-def get_cecase_from_db(prop_id, db_cursor):
-    caseid_sql = """
-    SELECT caseid FROM cecase
-        JOIN property ON cecase.property_propertyid = property.propertyid
-        WHERE propertyid = %s;
-    """
-    db_cursor.execute(caseid_sql, [prop_id])
-    # TODO: MAKE SURE CECASE ACTUALLY WORKS
-    # For example, can there be multiple caseids for a single property? If so, this breaks
-    try:
-        return db_cursor.fetchone()[0]  # Case ID
-    except TypeError:  # 'NoneType' object is not subscriptable:
-        return None
 
 
 def create_PropertyInfoChange_imap(cecase_id):
@@ -382,24 +330,27 @@ def writePropertyInfoChangeEvent(cvu_map, db_cursor):
     db_cursor.execute(insert_sql, cvu_map)
 
 
-def get_propid(parid, db_cursor):
-    select_sql = """
-        SELECT propertyid FROM public.property
-        WHERE parid = %s;"""
-    db_cursor.execute(select_sql, [parid])
-    return db_cursor.fetchone()[0]  # property id
+class ParcelFlags:
+    # __slots__ = ["ownername", "street", "citystatezip", "livingarea", "condition", "taxstatus", "new_parcel"] # Slots doesn't work with __dict__
+    def __init__(self):
+        self.new_parcel = False
+
+        # Differences from previous insert
+        self.ownername = False
+        self.street = False
+        self.citystatezip = False
+        self.livingarea = False
+        self.condition = False
+        self.taxstatus = False
+
+    def __bool__(self):
+        for k in self.__dict__:
+            if self.__dict__[k]:
+                return True
+        return False
 
 
-def get_unitid_from_db(prop_id, db_cursor):
-    # Throws a TypeError if the cursor doesn't return anything
-    select_sql = """
-        SELECT unitid FROM propertyunit
-        WHERE property_propertyid = %s"""
-    db_cursor.execute(select_sql, [prop_id])
-    try:
-        return db_cursor.fetchone()[0]  # unit id
-    except TypeError:
-        return None
+Flag = namedtuple("flag", ["name", "orig", "new"])
 
 
 def update_muni(muni, db_cursor, commit=True):
@@ -425,22 +376,31 @@ def update_muni(muni, db_cursor, commit=True):
     updated_count = 0
 
     for record in records:
-        inserted_flag = False
-
+        parcel_flags = ParcelFlags()
         parid = record["PARID"]
         if parcel_not_in_db(parid, db_cursor):
+            parcel_flags.new_parcel = True
             imap = create_insertmap_from_record(record)
             prop_id = write_property_to_db(imap, db_cursor)
 
             # TODO: Put code block in function
-            if record["PROPERTYUNIT"] != "":
-                unit_map = create_unit_map(prop_id, unit_id=record["PROPERTYUNIT"])
+            if record["PROPERTYUNIT"] == " ":
+                unit_id = insert.unit(
+                    {"unitnumber": DEFAULT_PROP_UNIT, "property_propertyid": prop_id},
+                    db_cursor,
+                )
             else:
-                unit_map = create_unit_map(prop_id, unit_id=DEFAULT_PROP_UNIT)
-            unit_id = insert_unit(unit_map, db_cursor)
-
-            cecase_map = create_cecase_insertmap(prop_id, unit_id)
-            write_cecase_to_db(cecase_map, db_cursor)
+                print("Nondefault unit event")
+                print(record["PROPERTYUNIT"])
+                unit_id = insert.unit(
+                    {
+                        "unitnumber": record["PROPERTYUNIT"],
+                        "property_propertyid": prop_id,
+                    },
+                    db_cursor,
+                )
+            cecase_map = create.cecase_imap(prop_id, unit_id)
+            insert.cecase(cecase_map, db_cursor)
 
             # Unfortunately, we have to scrape this oursevles to check for changes
             owner_name = OwnerName.get_Owner_given_parid(parid)
@@ -452,7 +412,7 @@ def update_muni(muni, db_cursor, commit=True):
             inserted_count += 1
             inserted_flag = True
         else:
-            prop_id = get_propid(parid, db_cursor)
+            prop_id = fetch.get_propid(parid, db_cursor)
             # We have to scrape this again to see if it changed
             owner_name = OwnerName.get_Owner_given_parid(parid)
 
@@ -460,37 +420,37 @@ def update_muni(muni, db_cursor, commit=True):
             prop_id, owner_name.raw, record
         )
         # Property external data is a misnomer. It's just a log of the data from every time stuff
-        prop_id = write_propertyexternaldata(propextern_map, db_cursor)
+        write_propertyexternaldata(propextern_map, db_cursor)
 
-        if parcel_changed(prop_id, db_cursor):
-            #   This whole block of code does one important task:
-            #       writeCodeViolationEvent(cvu_map, db_cursor)
-            #   The prefacing code is just error handling to make sure there is enough info to write about it
+        if flags := parcel_changed(prop_id, parcel_flags, db_cursor):
+            if flags.new_parcel:
+                event = events.NewParcelidEvent(parid, prop_id, db_cursor)
+                event.write_to_db(
+                    db_cursor
+                )  # Todo: Should these two lines be a single line?
+                print("New Parcel Id Event written to database")
 
-            # # Code enforcement officers ought to verify data before it is updated in the database.
-            # imap = create_insertmap_from_record(record)
-            # update_property_in_db(prop_id, imap, db_cursor)
-            # TODO: Add newPropertyEvent
-
-            cecase_id = get_cecase_from_db(prop_id, db_cursor)
-            if cecase_id is None:
-                unit_id = get_unitid_from_db(prop_id, db_cursor)
-                if unit_id is None:
-                    # TODO: Repeated code. Put in function
-                    if record["PROPERTYUNIT"] != "":
-                        unit_map = create_unit_map(
-                            prop_id, unit_id=record["PROPERTYUNIT"]
-                        )
-                    else:
-                        unit_map = create_unit_map(prop_id, unit_id=DEFAULT_PROP_UNIT)
-                    unit_id = insert_unit(unit_map, db_cursor)
-
-                cecase_map = create_cecase_insertmap(prop_id, unit_id)
-                cecase_id = write_cecase_to_db(cecase_map, db_cursor)
-
-            cvu_map = create_PropertyInfoChange_imap(cecase_id)
-            writePropertyInfoChangeEvent(cvu_map, db_cursor)
-            if not inserted_flag:
+            else:
+                if flags.ownername:
+                    event = events.DifferentOwnerEvent(parid, prop_id, flags.ownername)
+                    event.write_to_db(db_cursor)
+                if flags.street:
+                    event = events.DifferentStreetEvent(parid, prop_id, flags.street)
+                    event.write_to_db(db_cursor)
+                if flags.citystatezip:
+                    event = events.DifferentCityStateZip(
+                        parid, prop_id, flags.citystatezip
+                    )
+                    event.write_to_db(db_cursor)
+                if flags.livingarea:
+                    event = events.DifferentLivingArea(parid, prop_id, flags.livingarea)
+                    event.write_to_db(db_cursor)
+                if flags.condition:
+                    event = events.DifferentCondition(parid, prop_id, flags.condition)
+                    event.write_to_db(db_cursor)
+                if flags.taxstatus:
+                    event = events.DifferentTaxStatus(parid, prop_id, flags.taxstatus)
+                    event.write_to_db(db_cursor)
                 updated_count += 1
 
         if commit:
