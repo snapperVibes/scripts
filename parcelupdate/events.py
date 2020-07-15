@@ -1,5 +1,10 @@
 import fetch
 import insert
+from colorama import init
+
+init()
+from colorama import Fore, Back, Style
+
 from _constants import DEFAULT_PROP_UNIT
 from _constants import BOT_ID
 
@@ -51,6 +56,8 @@ class Event:
             self.ce_caseid = insert.cecase(self.__dict__, db_cursor)
         self._write_event_dunder_dict()
         self.event_id = self._write_event_to_db(db_cursor)  # uses self.ce_caseid
+        print(Fore.RED, self.eventdescription, sep="")
+        print(Style.RESET_ALL, end="")
 
     def _get_cecase_id(self, db_cursor):
         select_sql = """
@@ -223,6 +230,19 @@ class DifferentTaxStatus(Event):
     def __init__(self, parid, prop_id, flag, db_cursor):
         super().__init__(db_cursor=db_cursor, parid=parid, prop_id=prop_id)
         self.category_id = 306
+        self.description = (
+            f"Parcel {parid}'s {flag.name} changed from {flag.orig} to {flag.new}"
+        )
+        self.active = True
+        self.ce_notes = " "
+        self.event_notes = " "
+        self.occ_period = None
+
+
+class DifferentTaxCode(Event):
+    def __init__(self, parid, prop_id, flag, db_cursor):
+        super().__init__(db_cursor=db_cursor, parid=parid, prop_id=prop_id)
+        self.category_id = 307
         self.description = (
             f"Parcel {parid}'s {flag.name} changed from {flag.orig} to {flag.new}"
         )

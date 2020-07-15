@@ -12,9 +12,11 @@ DEFAULT_PROP_UNIT = -1
 
 # Allegheny County Property Assessment span ids
 OWNER = "BasicInfo1_lblOwner"
+TAXINFO = "lblTaxInfo"
 
 # HTML Elements
 SPAN = "span"
+TR = "tr"
 
 # Bot attributes
 BOT_NAME = "sylvia"

@@ -13,6 +13,7 @@ requests = "*"
 psycopg2 = "*"
 bs4 = "*"
 click = "*"
+colorama = "*"
 
 [requires]
 python_version = "3.8"

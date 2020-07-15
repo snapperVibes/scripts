@@ -25,7 +25,6 @@ from _constants import DASHES
 @click.option("-port", nargs=1, default=5432)
 def main(municodes, commit, u, password, port):
     """Updates the CodeNForce database with the most recent data provided by the WPRDC."""
-
     start = time.time()
     if commit:
         click.echo("Data will be committed to the database")

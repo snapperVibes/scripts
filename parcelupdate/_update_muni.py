@@ -9,11 +9,12 @@ Actions resulting from trigger functions are commented in the following syntax:
 import json
 from collections import namedtuple
 
-import create as create
+import create
 import events
-import fetch as fetch
+import fetch
 import insert
-from _scrape_and_parse import OwnerName
+import _scrape_and_parse as snp
+from _constants import GENERALINFO, BUILDING, TAX, SALES
 from _constants import DASHES, MEDIUM_DASHES, SHORT_DASHES, SPACE
 from _constants import DEFAULT_PROP_UNIT, BOT_ID
 
@@ -114,7 +115,7 @@ def create_insertmap_from_record(r):
     imap["addr_state"] = r["PROPERTYSTATE"]
     imap["addr_zip"] = r["PROPERTYZIP"]
     imap["ownercode"] = r[
-        "OWNERCODE"
+        "OWNERDESC"
     ]  # Todo: Verify there is an ownercode to ownerdesc table
     imap["propclass"] = r["CLASS"]  # Todo: Verify
     imap["lastupdatedby"] = BOT_ID
@@ -196,9 +197,22 @@ def connect_property_to_person(prop_id, person_id, db_cursor):
     db_cursor.execute(insert_sql, propperson)
 
 
-def create_propertyexternaldata_map(prop_id, name, r):
+def compare(WPRDC_data, AlleghenyCountyData):
+    if WPRDC_data != AlleghenyCountyData:
+        raise ValueError(
+            "The WPRDC's data does not match the data scraped from Allegheny County"
+        )
+
+
+def validate_data(r, owner, tax):
+    # Todo: Validate more data
+    compare(r["TAXYEAR"], int(snp.strip_whitespace(tax.year)))
+
+
+def create_propertyexternaldata_map(prop_id, name, r, tax_status):
     # Yes, this is basically duplicate code.
     # However, explicitly restating what record data maps to insert data makes the code easier to both read and write.
+
     imap = {}
     imap["property_propertyid"] = prop_id
     imap["ownername"] = name
@@ -223,9 +237,19 @@ def create_propertyexternaldata_map(prop_id, name, r):
     imap["usecode"] = r["USECODE"]
     imap["livingarea"] = r["FINISHEDLIVINGAREA"]
     imap["condition"] = r["CONDITION"]  # Todo: Condition to condition desc table
-    imap["taxstatus"] = r["TAXCODE"]
+    imap["taxcode"] = r["TAXCODE"]
+    # Applies to only to Public Utility Realty Tax Act
+    #   If taxes are paid, they are paid into a state fund rather than to local taxing bodies
+    imap["taxsubcode"] = r["TAXSUBCODE"]
+    imap["taxstatus"] = tax_status.status
+
+    #   The WPRDC pads their year with a nonbreaking space
     imap["taxstatusyear"] = r["TAXYEAR"]
+
+    imap["tax"] = tax_status.tax
+
     imap["notes"] = SPACE.join(("Scraped by bot", BOT_ID))
+
     return imap
     # imap["lastupdated"]
 
@@ -238,7 +262,8 @@ def write_propertyexternaldata(propextern_map, db_cursor):
             address_city, address_state, address_zip, saleprice,
             saleyear, assessedlandvalue, assessedbuildingvalue, assessmentyear,
             usecode, livingarea, condition, taxstatus,
-            taxstatusyear, notes, lastupdated
+            taxstatusyear, notes, lastupdated, tax,
+            taxcode, taxsubcode
         )
         VALUES(
             DEFAULT,
@@ -246,7 +271,8 @@ def write_propertyexternaldata(propextern_map, db_cursor):
             %(address_city)s, %(address_state)s, %(address_zip)s, %(saleprice)s,
             %(saleyear)s, %(assessedlandvalue)s, %(assessedbuildingvalue)s, %(assessmentyear)s,
             %(usecode)s, %(livingarea)s, %(condition)s, %(taxstatus)s,
-            %(taxstatusyear)s, %(notes)s, now()
+            %(taxstatusyear)s, %(notes)s, now(), %(tax)s,
+            %(taxcode)s, %(taxsubcode)s
         )
         RETURNING property_propertyid;
     """
@@ -259,7 +285,7 @@ def parcel_changed(prop_id, flags, db_cursor):
     select_sql = """
         SELECT
             property_propertyid, ownername, address_street, address_citystatezip,
-            livingarea, condition, taxstatus
+            livingarea, condition, taxstatus, taxcode
         FROM public.propertyexternaldata
         WHERE property_propertyid = %(prop_id)s
         ORDER BY lastupdated DESC
@@ -275,6 +301,7 @@ def parcel_changed(prop_id, flags, db_cursor):
         print("First time parcel has appeared in propertyexternaldata")
         if flags.new_parcel == False:
             # TODO: THROW ERROR: Doesn't properly check for flags
+
             print(
                 "Error: Parcel appeared in public.propertyexternaldata for the first time even though the parcel ID is flagged as appearing in public.property before."
             )
@@ -283,18 +310,17 @@ def parcel_changed(prop_id, flags, db_cursor):
     if old[0] != new[0]:
         flags.ownername = Flag("owner name", old[0], new[0])
     if old[1] != new[1]:
-        flags.street = Flag("street", old[0], new[0])
+        flags.street = Flag("street", old[1], new[1])
     if old[2] != new[2]:
-        flags.citystatezip = Flag("city, state, or zipcode", old[0], new[0])
+        flags.citystatezip = Flag("city, state, or zipcode", old[2], new[2])
     if old[3] != new[3]:
-        flags.livingarea = Flag("living area size", old[0], new[0])
+        flags.livingarea = Flag("living area size", old[3], new[3])
     if old[4] != new[4]:
-        flags.condition = Flag("condition", old[0], new[0])
+        flags.condition = Flag("condition", old[4], new[4])
     if old[5] != new[5]:
-        flags.taxstatus = Flag(
-            "tax status", old[0], new[0]
-        )  # Perhaps have a look up here
-    # Todo: Property taxes
+        flags.taxstatus = Flag("tax status", old[5], new[5])
+    if old[6] != new[6]:
+        flags.taxcode = Flag("tax code", old[6], new[6])
 
 
 def create_unit_map(prop_id, unit_id):
@@ -342,6 +368,7 @@ class ParcelFlags:
         self.livingarea = False
         self.condition = False
         self.taxstatus = False
+        self.taxcode = False
 
     def __bool__(self):
         for k in self.__dict__:
@@ -360,7 +387,8 @@ def update_muni(muni, db_cursor, commit=True):
 
     print("Updating {} ({})".format(muni.name, muni.municode))
     print(MEDIUM_DASHES)
-    # We COULD not save the file and work only in JSON, but saving the file is better for understanding what happened
+    # We COULD not save the file and work only in JSON,
+    # but saving the file is better for understanding what happened
     filename = fetch.fetch_muni_data_and_write_to_file(muni)
     if not fetch.validate_muni_json(filename):
         print(DASHES)
@@ -378,6 +406,13 @@ def update_muni(muni, db_cursor, commit=True):
     for record in records:
         parcel_flags = ParcelFlags()
         parid = record["PARID"]
+
+        data = snp.scrape_county_property_assessments(parid, pages=[TAX])
+        for page in data:
+            data[page] = snp.soupify_html(data[page])
+        owner_name = snp.OwnerName.get_Owner_from_soup(data[TAX])
+        tax_status = snp.parse_tax_from_soup(data[TAX])
+
         if parcel_not_in_db(parid, db_cursor):
             parcel_flags.new_parcel = True
             imap = create_insertmap_from_record(record)
@@ -390,7 +425,6 @@ def update_muni(muni, db_cursor, commit=True):
                     db_cursor,
                 )
             else:
-                print("Nondefault unit event")
                 print(record["PROPERTYUNIT"])
                 unit_id = insert.unit(
                     {
@@ -402,10 +436,9 @@ def update_muni(muni, db_cursor, commit=True):
             cecase_map = create.cecase_imap(prop_id, unit_id)
             insert.cecase(cecase_map, db_cursor)
 
-            # Unfortunately, we have to scrape this oursevles to check for changes
-            owner_name = OwnerName.get_Owner_given_parid(parid)
             owner_map = create_owner_insertmap(owner_name, record)
             person_id = write_person_to_db(owner_map, db_cursor)
+
             # ~~ Update Spelling (Not implemented)
 
             connect_property_to_person(prop_id, person_id, db_cursor)
@@ -414,10 +447,10 @@ def update_muni(muni, db_cursor, commit=True):
         else:
             prop_id = fetch.get_propid(parid, db_cursor)
             # We have to scrape this again to see if it changed
-            owner_name = OwnerName.get_Owner_given_parid(parid)
 
+        validate_data(record, owner_name, tax_status)
         propextern_map = create_propertyexternaldata_map(
-            prop_id, owner_name.raw, record
+            prop_id, owner_name.raw, record, tax_status
         )
         # Property external data is a misnomer. It's just a log of the data from every time stuff
         write_propertyexternaldata(propextern_map, db_cursor)
@@ -428,14 +461,17 @@ def update_muni(muni, db_cursor, commit=True):
                 event.write_to_db(
                     db_cursor
                 )  # Todo: Should these two lines be a single line?
-                print("New Parcel Id Event written to database")
 
             else:
                 if flags.ownername:
-                    event = events.DifferentOwnerEvent(parid, prop_id, flags.ownername)
+                    event = events.DifferentOwnerEvent(
+                        parid, prop_id, flags.ownername, db_cursor
+                    )
                     event.write_to_db(db_cursor)
                 if flags.street:
-                    event = events.DifferentStreetEvent(parid, prop_id, flags.street)
+                    event = events.DifferentStreetEvent(
+                        parid, prop_id, flags.street, db_cursor
+                    )
                     event.write_to_db(db_cursor)
                 if flags.citystatezip:
                     event = events.DifferentCityStateZip(
@@ -443,14 +479,23 @@ def update_muni(muni, db_cursor, commit=True):
                     )
                     event.write_to_db(db_cursor)
                 if flags.livingarea:
-                    event = events.DifferentLivingArea(parid, prop_id, flags.livingarea)
+                    event = events.DifferentLivingArea(
+                        parid, prop_id, flags.livingarea, db_cursor
+                    )
                     event.write_to_db(db_cursor)
                 if flags.condition:
-                    event = events.DifferentCondition(parid, prop_id, flags.condition)
+                    event = events.DifferentCondition(
+                        parid, prop_id, flags.condition, db_cursor
+                    )
                     event.write_to_db(db_cursor)
                 if flags.taxstatus:
-                    event = events.DifferentTaxStatus(parid, prop_id, flags.taxstatus)
+                    event = events.DifferentTaxStatus(
+                        parid, prop_id, flags.taxstatus, db_cursor
+                    )
                     event.write_to_db(db_cursor)
+                if flags.taxcode:
+                    event = events.DifferentTaxCode(parid, flags.taxcode, db_cursor)
+                    event.write_to_db()
                 updated_count += 1
 
         if commit:
